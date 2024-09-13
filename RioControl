@@ -1,0 +1,89 @@
+# Define the path to the file containing the IP addresses
+$ipFilePath = "C:\temp\ips.txt"
+
+# Define the path to save the removed IPs
+$removedIpsFilePath = "C:\temp\removed_IPs.txt"
+
+# Read the IP addresses from the file
+$ips = Get-Content -Path $ipFilePath
+
+# Define the GreyNoise API key and the base URL (Had to use v2 as v3 was not working for finding the related ORGs)
+$apiKey = "API_KEY_HERE"
+$baseUrl = "https://api.greynoise.io/v3/community/"
+
+
+# Initialize lists for RIOT and Benign IPs
+$riotIPs = @()
+$benignIPs = @()
+
+# Loop through each IP and classify it using the GreyNoise Community API
+foreach ($ip in $ips) {
+    # Trim whitespace from the IP address
+    $ip = $ip.Trim()
+
+    # Skip empty lines
+    if ([string]::IsNullOrWhiteSpace($ip)) {
+        continue
+    }
+
+    try {
+        # Build the API URL for each IP
+        $apiUrl = $baseUrl + $ip
+
+        # Call the GreyNoise Community API
+        $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers @{ "key" = $apiKey }
+
+        # Check if the API returned a success message
+        if ($response.message -ne "Success") {
+            Write-Host "API Error for IP $ip $($response.message)" -ForegroundColor Red
+            continue
+        }
+
+        # Check if the 'riot' field is true
+        if ($response.riot -eq $true) {
+            $riotIPs += $ip
+            continue
+        }
+
+        # Check if the classification is 'benign' and not a RIOT IP
+        if ($response.classification -eq "benign") {
+            $benignIPs += $ip
+        }
+
+    } catch {
+        # Handle exceptions such as connection issues or invalid IPs
+        Write-Host "Exception processing IP $ip $_" -ForegroundColor Red
+    }
+}
+
+# Output the lists with colored headers
+Write-Host "`nRIOT IPs:" -ForegroundColor Cyan
+if ($riotIPs.Count -gt 0) {
+    $riotIPs | ForEach-Object { Write-Host "- $_" }
+} else {
+    Write-Host "No RIOT IPs detected."
+}
+
+Write-Host "`nBenign IPs:" -ForegroundColor Green
+if ($benignIPs.Count -gt 0) {
+    $benignIPs | ForEach-Object { Write-Host "- $_" }
+} else {
+    Write-Host "No Benign IPs detected."
+}
+
+# Remove RIOT and Benign IPs from the original list of IPs
+$ipsToRemove = $riotIPs + $benignIPs
+$remainingIPs = $ips | Where-Object { $ipsToRemove -notcontains $_ }
+
+# Save the remaining IPs back to the original file
+$remainingIPs | Set-Content -Path $ipFilePath
+
+# Combine the removed RIOT and Benign IPs
+$removedIPs = $riotIPs + $benignIPs
+
+# Save the removed IPs to the 'removed_IPs.txt' file
+$removedIPs | Set-Content -Path $removedIpsFilePath
+
+# Output the number of RIOT and Benign IPs that were removed and save the file
+Write-Host "`nRemoved $($riotIPs.Count) RIOT IPs and $($benignIPs.Count) Benign IPs from the file."
+Write-Host "Removed IPs have been saved to $removedIpsFilePath"
